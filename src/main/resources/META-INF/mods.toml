@@ -1,0 +1,26 @@
+modLoader="javafml"
+loaderVersion="[0,)"
+license="MIT"
+
+[[mods]]
+modId="zeldalegend"
+version="1.0.0"
+displayName="Zelda Legend Mod"
+authors="momort02"
+description='''
+Ajoute l'Épée de Légende et le Bouclier Hylia de The Legend of Zelda.
+'''
+
+[[dependencies.zeldalegend]]
+    modId="forge"
+    mandatory=true
+    versionRange="[0,)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.zeldalegend]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.21.5,1.22,)"
+    ordering="NONE"
+    side="BOTH"
