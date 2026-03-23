@@ -1,23 +1,26 @@
 package com.zeldalegend.mod.items;
 
 import net.minecraft.network.chat.Component;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.entity.projectile.LargeFireball;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 public class LegendarySwordItem extends Item {
 
@@ -38,31 +41,71 @@ public class LegendarySwordItem extends Item {
         }
     }
 
+    private static final int COOLDOWN_TICKS = 15 * 20; // 15 secondes
+    private static final double RAY_RANGE    = 64.0;
+    private static final float  RAY_DAMAGE   = 8.0f;
+    private static final int    FIRE_TICKS   = 5 * 20; // 5 secondes de feu
+
     @Override
     public InteractionResult use(Level level, Player player, InteractionHand hand) {
+        if (player.getCooldowns().isOnCooldown(player.getItemInHand(hand))) {
+            return InteractionResult.PASS;
+        }
+
         if (player.getHealth() >= player.getMaxHealth() && !level.isClientSide) {
-            ServerLevel serverLevel = (ServerLevel) level;
-            Vec3 look = player.getLookAngle();
-            Vec3 pos = player.position().add(0, player.getEyeHeight(), 0);
+            Vec3 start = player.getEyePosition();
+            Vec3 look  = player.getLookAngle();
+            Vec3 end   = start.add(look.scale(RAY_RANGE));
 
-            for (int i = 0; i < 3; i++) {
-                double spread = (i - 1) * 0.15;
-                Vec3 dir = new Vec3(
-                    look.x + spread * look.z,
-                    look.y,
-                    look.z - spread * look.x
-                ).normalize().scale(3.0);
+            // Recherche de toutes les entités dans le couloir du rayon
+            AABB searchBox = player.getBoundingBox().expandTowards(look.scale(RAY_RANGE)).inflate(1.0);
+            Optional<EntityHitResult> hit = level.getEntities(player, searchBox)
+                .stream()
+                .filter(e -> e instanceof LivingEntity && e != player)
+                .map(e -> {
+                    AABB box = e.getBoundingBox().inflate(0.3);
+                    return box.clip(start, end).map(pos -> new EntityHitResult(e, pos)).orElse(null);
+                })
+                .filter(java.util.Objects::nonNull)
+                .min(Comparator.comparingDouble(r -> r.getLocation().distanceToSqr(start)));
 
-                LargeFireball fireball = new LargeFireball(serverLevel, player, dir, 1);
-                fireball.setPos(pos.x, pos.y, pos.z);
-                serverLevel.addFreshEntity(fireball);
+            if (hit.isPresent()) {
+                Entity target = hit.get().getEntity();
+                target.hurt(level.damageSources().playerAttack(player), RAY_DAMAGE);
+                target.setRemainingFireTicks(FIRE_TICKS);
+
+                // Particules de flammes le long du rayon côté serveur
+                Vec3 hitPos = hit.get().getLocation();
+                spawnRayParticles(level, start, hitPos);
+            } else {
+                // Rayon dans le vide : particules sur toute la longueur
+                spawnRayParticles(level, start, end);
             }
 
-            level.playSound(null, player.blockPosition(), SoundEvents.LIGHTNING_BOLT_THUNDER, SoundSource.PLAYERS, 0.5f, 1.8f);
+            level.playSound(null, player.blockPosition(),
+                SoundEvents.FIRECHARGE_USE, SoundSource.PLAYERS, 1.0f, 1.6f);
+            player.getCooldowns().addCooldown(player.getItemInHand(hand), COOLDOWN_TICKS);
             return InteractionResult.SUCCESS;
         }
 
         return InteractionResult.PASS;
+    }
+
+    /** Spawn des particules de flamme le long du trajet du rayon (serveur uniquement). */
+    private void spawnRayParticles(Level level, Vec3 from, Vec3 to) {
+        if (level.isClientSide) return;
+        net.minecraft.server.level.ServerLevel serverLevel = (net.minecraft.server.level.ServerLevel) level;
+        Vec3 dir = to.subtract(from);
+        double length = dir.length();
+        Vec3 step = dir.normalize();
+        for (double d = 0; d < length; d += 0.5) {
+            Vec3 p = from.add(step.scale(d));
+            serverLevel.sendParticles(
+                net.minecraft.core.particles.ParticleTypes.FLAME,
+                p.x, p.y, p.z,
+                1, 0.05, 0.05, 0.05, 0.01
+            );
+        }
     }
 
     public void appendHoverText(ItemStack stack, Item.TooltipContext context, List<Component> tooltip, TooltipFlag flag) {
@@ -70,6 +113,6 @@ public class LegendarySwordItem extends Item {
         tooltip.add(Component.literal("§7Forgée par les Trois Déesses"));
         tooltip.add(Component.literal("§b→ Ralentit et affaiblit les ennemis"));
         tooltip.add(Component.literal("§c→ Pouvoir décuplé sous les 25% de vie"));
-        tooltip.add(Component.literal("§e→ Clic droit à cœur plein : tir de rayons"));
+        tooltip.add(Component.literal("§e→ Clic droit à cœur plein : rayon de feu (cd 15s)"));
     }
 }
